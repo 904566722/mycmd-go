@@ -1,9 +1,12 @@
 package flow
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,191 +79,240 @@ func (o *todoArchiveOptions) run() error {
 }
 
 func (o *todoArchiveOptions) processTodoFile(todoFile string, startDate, endDate string) ([]models.TaskInfo, error) {
-	// logger.Debug("开始处理 todo 文件: %s", todoFile)
-	// logger.Debug("归档日期范围: %s ~ %s", startDate, endDate)
+	logger.Debug("开始处理 todo 文件: %s", todoFile)
+	logger.Info("归档日期范围: %s ~ %s", startDate, endDate)
 
-	// file, err := os.Open(todoFile)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("打开 todo 文件失败: %w", err)
-	// }
-	// defer file.Close()
+	file, err := os.Open(todoFile)
+	if err != nil {
+		return nil, fmt.Errorf("打开 todo 文件失败: %w", err)
+	}
+	defer file.Close()
 
-	// var tasks []taskInfo
-	// scanner := bufio.NewScanner(file)
-	// inArchive := false
-	// lineNum := 0
+	var tasks []models.TaskInfo
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
 
-	// for scanner.Scan() {
-	// 	lineNum++
-	// 	line := scanner.Text()
-	// 	line = strings.TrimSpace(line)
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
 
-	// 	logger.Debug("\n--- 处理第 %d 行 ---", lineNum)
-	// 	logger.Debug("原始内容: %s", line)
+		task := o.parseTaskLine(line)
+		if task == nil {
+			continue
+		}
 
-	// 	if line == "Archive:" {
-	// 		inArchive = true
-	// 		logger.Debug("进入归档区域")
-	// 		continue
-	// 	} else if line != "" && !strings.HasPrefix(line, " ") && inArchive {
-	// 		inArchive = false
-	// 		logger.Debug("离开归档区域")
-	// 	}
+		if o.isDateInRange(startDate, endDate, task.StartDate, task.EndDate) {
+			logger.Success("找到符合条件的任务: %s", task.Name)
+			tasks = append(tasks, *task)
+		} else {
+			logger.Warning("任务 %s 不在日期范围内", task.Name)
+		}
+	}
 
-	// 	if (inArchive || strings.Contains(line, "@started")) &&
-	// 		line != "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "//") {
-	// 		logger.Debug("发现任务行")
-	// 		if task := o.parseTaskLine(line); task != nil {
-	// 			logger.Debug("解析结果: 状态=%s, 开始时间=%s, 结束时间=%s, 分类=%s, 项目=%s",
-	// 				task.status, task.startDate, task.endDate, task.category, task.project)
-
-	// 			if o.isDateInRange(task.startDate, startDate, endDate) {
-	// 				logger.Debug("✓ 任务在日期范围内，添加到归档列表")
-	// 				tasks = append(tasks, *task)
-	// 			} else {
-	// 				logger.Debug("✗ 任务不在日期范围内，跳过")
-	// 			}
-	// 		} else {
-	// 			logger.Debug("任务解析失败，跳过")
-	// 		}
-	// 	} else {
-	// 		logger.Debug("跳过非任务行")
-	// 	}
-	// }
-
-	// logger.Debug("\n总结: 共处理 %d 行，找到 %d 个符合条件的任务", lineNum, len(tasks))
-	// return tasks, scanner.Err()
-
-	return nil, nil
+	logger.Debug("\n总结: 共处理 %d 行，找到 %d 个符合条件的任务", lineNum, len(tasks))
+	return tasks, scanner.Err()
 }
 
+// ✔ mock-duale @done(24-11-21 15:41) @project(REFACTOR.DUALENGINE)
+// 当第一个 @ 出现之后，后面所有内容都是 tag，应该拆分每个 @ 内容，而不是按照空格拆分
 func (o *todoArchiveOptions) parseTaskLine(line string) *models.TaskInfo {
 	task := &models.TaskInfo{}
 
 	line = strings.TrimSpace(line)
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
+	if line == "" {
 		return nil
 	}
 
-	// 1. get status
-	symbol := fields[0]
+	// 检查每个已知的符号
+	var matchedSymbol string
+	var status models.TaskStatus
 	var startedBySymbol bool
-	task.Status, startedBySymbol = models.SymbolSet[symbol]
+
+	// 先尝试匹配最长的符号
+	for symbol := range models.SymbolSet {
+		if strings.HasPrefix(line, symbol) {
+			if len(symbol) > len(matchedSymbol) {
+				matchedSymbol = symbol
+				status, startedBySymbol = models.SymbolSet[symbol]
+			}
+		}
+	}
+
 	if !startedBySymbol {
 		return nil
 	}
 
-	// range fields[1:]
-	for _, field := range fields[1:] {
-		if !strings.HasPrefix(field, "@") {
+	logger.Info("开始解析任务行: %s", line)
+
+	task.Status = status
+
+	// 去掉状态符号
+	line = strings.TrimPrefix(line, matchedSymbol)
+	line = strings.TrimSpace(line)
+
+	// 找到第一个 @ 的位置
+	firstAtIndex := strings.Index(line, "@")
+	if firstAtIndex == -1 {
+		// 没有标签，整行都是任务名
+		task.Name = line
+		return task
+	}
+
+	// 提取任务名称和标签部分
+	task.Name = strings.TrimSpace(line[:firstAtIndex])
+	tagsPart := line[firstAtIndex:]
+
+	// 按 @ 分割标签
+	tags := strings.Split(tagsPart, "@")
+	for _, tag := range tags {
+		if tag == "" {
 			continue
 		}
+		tag = "@" + tag
 
-		// 截取 @ 到 ( 前一个字符的内容 （包含 @，如果没有 (，则为整个字符串）
-		// 例如: @project(BUGFIX.BCS) -> @project
-		// 例如: @created -> @created
-		tagName := field
-		if idx := strings.Index(field, "("); idx != -1 {
-			tagName = field[:idx]
+		// 截取标签名
+		tagName := tag
+		if idx := strings.Index(tag, "("); idx != -1 {
+			tagName = tag[:idx]
 		}
 
 		parseFn := models.TagParserFns[models.TagSet[tagName]]
 		if parseFn == nil {
-			logger.Warning("未找到 tag %s 的解析函数", tagName)
 			continue
 		}
 
-		if err := parseFn(field, task); err != nil {
+		tag = strings.TrimSpace(tag)
+		if err := parseFn(tag, task); err != nil {
 			logger.Warning("解析 tag %s 失败: %v", tagName, err)
 			continue
 		}
-
 	}
 
 	return task
 }
 
-func (o *todoArchiveOptions) isDateInRange(targetDate, startDate, endDate string) bool {
-	logger.Debug("检查日期范围: 目标=%s, 开始=%s, 结束=%s", targetDate, startDate, endDate)
-
-	if targetDate == "" || targetDate == "unknown" {
-		logger.Debug("目标日期无效")
+// isDateInRange 检查任务时间范围与日期范围是否存在交集
+func (o *todoArchiveOptions) isDateInRange(rangeStart, rangeEnd string, taskStartTime, taskEndTime *models.TaskTime) bool {
+	// 如果任务没有开始时间和结束时间，直接返回 false
+	if taskStartTime == nil && taskEndTime == nil {
 		return false
 	}
 
-	parseDate := func(date string) time.Time {
-		currentYear := time.Now().Year()
-		t, _ := time.Parse("2006/01/02", fmt.Sprintf("%d/%s", currentYear, date))
-		return t
+	// 将 TaskTime 转换为 time.Time
+	parseTaskTime := func(t *models.TaskTime) time.Time {
+		return time.Date(2000+t.Year, time.Month(t.Month), t.Day, 0, 0, 0, 0, time.Local)
 	}
 
-	target := parseDate(targetDate)
-	start := parseDate(startDate)
-	end := parseDate(endDate)
+	// 将日期字符串转换为 time.Time
+	parseRangeDate := func(date string) time.Time {
+		parts := strings.Split(date, "/")
+		if len(parts) != 2 {
+			logger.Warning("无效的日期格式: %s", date)
+			return time.Time{}
+		}
+		month, _ := strconv.Atoi(parts[0])
+		day, _ := strconv.Atoi(parts[1])
+		currentYear := time.Now().Year() - 2000 // 转换为两位数年份
+		return time.Date(2000+currentYear, time.Month(month), day, 0, 0, 0, 0, time.Local)
+	}
 
-	logger.Debug("解析后的日期: 目标=%v, 开始=%v, 结束=%v", target, start, end)
+	rangeStartTime := parseRangeDate(rangeStart)
+	rangeEndTime := parseRangeDate(rangeEnd)
 
 	// 处理跨年的情况
-	if end.Before(start) {
-		if target.Before(start) {
-			target = target.AddDate(1, 0, 0)
-			logger.Debug("跨年处理: 调整目标日期 +1 年")
-		}
-		end = end.AddDate(1, 0, 0)
-		logger.Debug("跨年处理: 调整结束日期 +1 年")
+	if rangeEndTime.Before(rangeStartTime) {
+		rangeEndTime = rangeEndTime.AddDate(1, 0, 0)
+		logger.Debug("跨年处理: 调整范围结束时间 +1 年")
 	}
 
-	result := !target.Before(start) && !target.After(end)
-	logger.Debug("日期范围检查结果: %v", result)
+	// 如果只有结束时间，且结束时间在范围内，则符合条件
+	if taskStartTime == nil && taskEndTime != nil {
+		taskEnd := parseTaskTime(taskEndTime)
+		result := !taskEnd.Before(rangeStartTime) && !taskEnd.After(rangeEndTime)
+		return result
+	}
+
+	// 正常情况：有开始时间
+	taskStart := parseTaskTime(taskStartTime)
+	var taskEnd time.Time
+	if taskEndTime != nil {
+		taskEnd = parseTaskTime(taskEndTime)
+	} else {
+		taskEnd = time.Now() // 如果没有结束时间，表示至今
+	}
+
+	// 判断时间范围是否有重叠
+	// 两个时间范围有重叠的条件是:
+	// !(任务结束 < 范围开始 || 任务开始 > 范围结束)
+	result := !(taskEnd.Before(rangeStartTime) || taskStart.After(rangeEndTime))
+	logger.Debug("日期范围检查结果: %v (范围: %s ~ %s, 任务: %s ~ %v)", result, rangeStart, rangeEnd, taskStart.Format("01/02"), taskEnd.Format("01/02"))
 	return result
 }
 
 func (o *todoArchiveOptions) generateArchiveContent(tasks []models.TaskInfo) string {
-	// var content strings.Builder
+	var content strings.Builder
 
-	// // 格式1
-	// content.WriteString("---------------------------------------------\n")
-	// content.WriteString("format1. 状态-开始时间-结束时间-分类-项目-名称\n")
-	// content.WriteString("---------------------------------------------\n\n")
+	// 格式1
+	content.WriteString("---------------------------------------------\n")
+	content.WriteString("format1. 状态-开始时间-结束时间-分类-项目-名称\n")
+	content.WriteString("---------------------------------------------\n\n")
 
-	// for _, task := range tasks {
-	// 	content.WriteString(fmt.Sprintf("%s-%s-%s-%s-%s-%s\n",
-	// 		task.status, task.startDate, task.endDate,
-	// 		task.category, task.project, task.name))
-	// }
+	for _, task := range tasks {
+		content.WriteString(task.String() + "\n")
+	}
 
-	// // 格式2
-	// content.WriteString("\n\n---------------------------------------------\n")
-	// content.WriteString("format2. (把已完成和进行中的任务按照分类罗列)\n")
-	// content.WriteString("---------------------------------------------\n")
+	// 格式2
+	content.WriteString("\n\n---------------------------------------------\n")
+	content.WriteString("format2. (把已完成和进行中的任务按照分类罗列)\n")
+	content.WriteString("---------------------------------------------\n")
 
-	// // 按分类组织任务
-	// categoryTasks := make(map[string][]string)
-	// for _, task := range tasks {
-	// 	if task.status != "已取消" {
-	// 		categoryTasks[task.category] = append(
-	// 			categoryTasks[task.category],
-	// 			fmt.Sprintf("%s-%s", task.project, task.name),
-	// 		)
-	// 	}
-	// }
+	// 按分类组织任务
+	categoryTasks := make(map[string][]string)
+	for _, task := range tasks {
+		task := &task
+		category := task.Category
+		if category == "" {
+			category = "OTHER"
+		}
+		if task.Status == models.TaskStatusDone {
+			task = task.IgnoreStatus()
+		}
+		s := task.IgnoreCategory().String()
 
-	// // 按分类名称排序
-	// categories := make([]string, 0, len(categoryTasks))
-	// for category := range categoryTasks {
-	// 	categories = append(categories, category)
-	// }
-	// sort.Strings(categories)
+		if task.Status != models.TaskStatusCancel {
+			categoryTasks[category] = append(
+				categoryTasks[category],
+				s,
+			)
+		}
+	}
 
-	// for _, category := range categories {
-	// 	content.WriteString(fmt.Sprintf("\n%s:\n", category))
-	// 	for i, task := range categoryTasks[category] {
-	// 		content.WriteString(fmt.Sprintf("%d. %s\n", i+1, task))
-	// 	}
-	// }
+	// 按分类名称排序,把 OTHER 放到最后
+	categories := make([]string, 0, len(categoryTasks))
+	hasOther := false
+	for category := range categoryTasks {
+		if category == "OTHER" {
+			hasOther = true
+			continue
+		}
+		categories = append(categories, category)
+	}
+	sort.Strings(categories)
+	if hasOther {
+		categories = append(categories, "OTHER")
+	}
 
-	// return content.String()
+	// 同时写入文件内容和打印日志
+	for _, category := range categories {
+		content.WriteString(fmt.Sprintf("\n%s:\n", category))
+		logger.Info("\n%s:", category)
+		
+		for i, task := range categoryTasks[category] {
+			content.WriteString(fmt.Sprintf("%d. %s\n", i+1, task))
+			logger.Info("%d. %s", i+1, task)
+		}
+	}
 
-	return ""
+	return content.String()
 }

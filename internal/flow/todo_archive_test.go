@@ -158,3 +158,106 @@ func TestTodoArchiveOptions_parseTaskLine(t *testing.T) {
 		})
 	}
 }
+
+func TestTodoArchiveOptions_isDateInRange(t *testing.T) {
+	curYear := 24
+
+	tests := []struct {
+		name       string
+		rangeStart string
+		rangeEnd   string
+		taskStart  *models.TaskTime
+		taskEnd    *models.TaskTime
+		want       bool
+	}{
+		{
+			name:       "任务在范围内",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 25, 10, 0),
+			taskEnd:    models.NewTaskTime(curYear, 11, 26, 18, 0),
+			want:       true,
+		},
+		{
+			name:       "任务在范围边界（开始日期）",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 20, 0, 0),
+			taskEnd:    models.NewTaskTime(curYear, 11, 21, 0, 0),
+			want:       true,
+		},
+		{
+			name:       "任务在范围边界（结束日期）",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 29, 0, 0),
+			taskEnd:    models.NewTaskTime(curYear, 11, 30, 23, 59),
+			want:       true,
+		},
+		{
+			name:       "任务在范围外（之前）",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 15, 10, 0),
+			taskEnd:    models.NewTaskTime(curYear, 11, 19, 18, 0),
+			want:       false,
+		},
+		{
+			name:       "任务在范围外（之后）",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 12, 1, 10, 0),
+			taskEnd:    models.NewTaskTime(curYear, 12, 2, 18, 0),
+			want:       false,
+		},
+		{
+			name:       "跨年范围（12月到1月）",
+			rangeStart: "12/20",
+			rangeEnd:   "01/10",
+			taskStart:  models.NewTaskTime(curYear, 12, 25, 10, 0),
+			taskEnd:    models.NewTaskTime(curYear+1, 1, 5, 18, 0),
+			want:       true,
+		},
+		{
+			name:       "无结束时间的任务（进行中）",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 25, 10, 0),
+			taskEnd:    nil,
+			want:       true,
+		},
+		{
+			name:       "无开始时间的任务",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  nil,
+			taskEnd:    models.NewTaskTime(curYear, 11, 25, 10, 0),
+			want:       true,
+		},
+		{
+			name:       "开始时间在之前，结束时间在范围内",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 15, 10, 0),
+			taskEnd:    models.NewTaskTime(curYear, 11, 25, 10, 0),
+			want:       true,
+		},
+		{
+			name:       "开始时间在之前，无结束时间",
+			rangeStart: "11/20",
+			rangeEnd:   "11/30",
+			taskStart:  models.NewTaskTime(curYear, 11, 15, 10, 0),
+			taskEnd:    nil,
+			want:       true,
+		},
+	}
+
+	opts := &todoArchiveOptions{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := opts.isDateInRange(tt.rangeStart, tt.rangeEnd, tt.taskStart, tt.taskEnd)
+			assert.Equal(t, tt.want, got, "isDateInRange() = %v, want %v", got, tt.want)
+		})
+	}
+}

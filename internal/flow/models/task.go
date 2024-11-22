@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"mycmd/pkg/logger"
 )
@@ -26,12 +27,94 @@ const (
 	TaskStatusCancel     TaskStatus = "已取消"
 )
 
+func (t *TaskInfo) String() string {
+	res := strings.Builder{}
+	res.WriteString(string(t.Status))
+
+	if t.Status == TaskStatusInProgress {
+		res.WriteString(fmt.Sprintf("(%d%%)", t.Percent))
+	}
+
+	dateRange := ""
+	if t.StartDate != nil && t.EndDate != nil {
+		if t.StartDate.Year == t.EndDate.Year {
+			dateRange = t.StartDate.MMDD()
+		} else {
+			dateRange = fmt.Sprintf("%s~%s", t.StartDate.MMDD(), t.EndDate.MMDD())
+		}
+	} else if t.StartDate != nil {
+		dateRange = fmt.Sprintf("%s~至今(%s)", t.StartDate.MMDD(), time.Now().Format("01/02"))
+	} else if t.EndDate != nil {
+		dateRange = t.EndDate.MMDD()
+	}
+
+	if dateRange != "" {
+		if res.Len() > 0 {
+			res.WriteString("-")
+		}
+		res.WriteString(dateRange)
+	}
+
+	if t.Category != "" {
+		if res.Len() > 0 {
+			res.WriteString("-")
+		}
+		res.WriteString(t.Category)
+	}
+
+	if t.Project != "" {
+		if res.Len() > 0 {
+			res.WriteString("-")
+		}
+		res.WriteString(t.Project)
+	}
+
+	if t.Name != "" {
+		if res.Len() > 0 {
+			res.WriteString("-")
+		}
+		res.WriteString(t.Name)
+	} else {
+		res.WriteString("-unknown task name")
+	}
+
+	return res.String()
+}
+
+func (t *TaskInfo) IgnoreCategory() *TaskInfo {
+	t.Category = ""
+	return t
+}
+
+func (t *TaskInfo) IgnoreStatus() *TaskInfo {
+	t.Status = ""
+	return t
+}
+
 type TaskTime struct {
 	Year  int
 	Month int
 	Day   int
 	Hour  int
 	Min   int
+}
+
+func (t *TaskTime) String() string {
+	return fmt.Sprintf("%02d-%02d-%02d %02d:%02d", t.Year, t.Month, t.Day, t.Hour, t.Min)
+}
+
+func (t *TaskTime) MMDD() string {
+	return fmt.Sprintf("%02d/%02d", t.Month, t.Day)
+}
+
+func NewTaskTime(year, month, day, hour, min int) *TaskTime {
+	return &TaskTime{
+		Year:  year,
+		Month: month,
+		Day:   day,
+		Hour:  hour,
+		Min:   min,
+	}
 }
 
 // 进行中: - ❍ ❑ ■ ⬜ □ ☐ ▪ ▫ – — ≡ → › [] [ ]

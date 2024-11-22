@@ -5,3 +5,4 @@ base:
 # flow 相关配置
 flow:
   todo_dir: "/Users/honghuiqiang/code/bingo/AllInOne/docs-v2/todo" # todo 文件夹路径
+  current_year: 2024 # 当前年份
