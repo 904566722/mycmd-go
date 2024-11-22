@@ -303,16 +303,21 @@ func (o *todoArchiveOptions) generateArchiveContent(tasks []models.TaskInfo) str
 		categories = append(categories, "OTHER")
 	}
 
+	var lines []string
 	// 同时写入文件内容和打印日志
 	for _, category := range categories {
 		content.WriteString(fmt.Sprintf("\n%s:\n", category))
 		logger.Info("\n%s:", category)
-		
+		lines = append(lines, fmt.Sprintf("【%s】", category))
+
 		for i, task := range categoryTasks[category] {
 			content.WriteString(fmt.Sprintf("%d. %s\n", i+1, task))
 			logger.Info("%d. %s", i+1, task)
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, task))
 		}
 	}
+
+	logger.Debug("\n%s", strings.Join(lines, " "))
 
 	return content.String()
 }
